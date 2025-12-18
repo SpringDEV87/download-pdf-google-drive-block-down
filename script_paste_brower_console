@@ -1,0 +1,60 @@
+(async function () {
+    // Xóa thư viện cũ nếu có để tránh xung đột
+    if (window.jspdf) delete window.jspdf;
+    const oldScript = document.getElementById('pdf-script');
+    if (oldScript) oldScript.remove();
+
+    console.log("%c🚀 Đang quét file mới...", "color: #ffaa00; font-weight: bold;");
+
+    const loadJsPDF = () => {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.id = 'pdf-script';
+            script.src = "https://unpkg.com/jspdf@latest/dist/jspdf.umd.min.js";
+            script.onload = resolve;
+            script.onerror = reject;
+            document.body.appendChild(script);
+        });
+    };
+
+    try {
+        await loadJsPDF();
+        // Đợi một chút để thư viện sẵn sàng hoàn toàn
+        await new Promise(r => setTimeout(r, 500));
+        
+        const { jsPDF } = window.jspdf;
+        // Chỉ lấy các ảnh đang thực sự HIỂN THỊ (visibility)
+        const validImgs = Array.from(document.querySelectorAll("img")).filter(img => {
+            return img.src.startsWith("blob:") && 
+                   img.naturalWidth > 200 && 
+                   img.offsetParent !== null; // Kiểm tra ảnh không bị ẩn
+        });
+
+        if (validImgs.length === 0) {
+            alert("Không tìm thấy trang nào. Hãy cuộn chuột xuống để load ảnh!");
+            return;
+        }
+
+        const pdf = new jsPDF({
+            orientation: validImgs[0].naturalWidth > validImgs[0].naturalHeight ? "l" : "p",
+            unit: "px",
+            format: [validImgs[0].naturalWidth, validImgs[0].naturalHeight],
+        });
+
+        for (let i = 0; i < validImgs.length; i++) {
+            const img = validImgs[i];
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.getContext("2d").drawImage(img, 0, 0);
+            if (i > 0) pdf.addPage([img.naturalWidth, img.naturalHeight]);
+            pdf.addImage(canvas.toDataURL("image/jpeg", 0.9), "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
+        }
+
+        let name = (document.title.split(" - Google Drive")[0] || "File_moi") + ".pdf";
+        pdf.save(name);
+        console.log("✅ Đã xong file: " + name);
+    } catch (e) {
+        console.error("Lỗi:", e);
+    }
+})();
