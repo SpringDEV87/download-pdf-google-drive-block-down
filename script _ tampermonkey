@@ -1,0 +1,162 @@
+// ==UserScript==
+// @name         Google Drive PDF - Force Scroll v7.3
+// @namespace    http://tampermonkey.net/
+// @version      7.3
+// @description  Cưỡng bức cuộn bằng cách can thiệp trực tiếp vào thuộc tính scrollTop
+// @match        *://drive.google.com/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    let isAutoScrolling = false;
+    let scrollInterval;
+
+    function getDrivePageCount() {
+        const textElements = Array.from(document.querySelectorAll('div, span'));
+        for (let el of textElements) {
+            const match = el.innerText?.match(/^\d+\s*\/\s*(\d+)$/);
+            if (match) return parseInt(match[1]);
+        }
+        return null;
+    }
+
+    // Hàm tìm khung cuộn thực sự (thường có thuộc tính overflow-y: scroll hoặc auto)
+    function findScrollContainer() {
+        const potential = document.querySelectorAll('div');
+        for (let el of potential) {
+            if (el.scrollHeight > el.clientHeight &&
+                (window.getComputedStyle(el).overflowY === 'auto' ||
+                 window.getComputedStyle(el).overflowY === 'scroll' ||
+                 el.className.includes('scrollable'))) {
+                return el;
+            }
+        }
+        return document.querySelector('.drive-viewer-paginated-scrollable') || document.body;
+    }
+
+    function addUI() {
+        if (document.getElementById('pdf-ultimate-cont')) {
+            updateStatus();
+            return;
+        }
+        const cont = document.createElement('div');
+        cont.id = 'pdf-ultimate-cont';
+        cont.style = "position:fixed; bottom:20px; left:20px; z-index:2147483647; display:flex; flex-direction:column; gap:10px;";
+
+        const autoBtn = document.createElement('div');
+        autoBtn.id = 'auto-scroll-btn';
+        autoBtn.innerHTML = '🚀 TỰ ĐỘNG CUỘN TRANG';
+        Object.assign(autoBtn.style, {
+            padding: '12px 15px', backgroundColor: '#e91e63', color: '#fff',
+            borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', textAlign: 'center',
+            border: '2px solid #fff', boxShadow: '0 4px 10px rgba(0,0,0,0.3)'
+        });
+
+        const downloadBtn = document.createElement('div');
+        downloadBtn.id = 'pdf-ultimate-btn';
+        Object.assign(downloadBtn.style, {
+            padding: '15px 20px', backgroundColor: '#ccc', border: '3px solid #000',
+            borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '5px 5px 0px #000', textAlign: 'center'
+        });
+
+        cont.appendChild(autoBtn);
+        cont.appendChild(downloadBtn);
+        document.body.appendChild(cont);
+
+        autoBtn.onclick = () => {
+            if (!isAutoScrolling) {
+                const container = findScrollContainer();
+                if (!container) return alert("Không tìm thấy khung cuộn!");
+
+                isAutoScrolling = true;
+                autoBtn.innerHTML = '🛑 DỪNG LẠI';
+                autoBtn.style.backgroundColor = '#000';
+
+                scrollInterval = setInterval(() => {
+                    // Ép khung hình cuộn xuống 500px
+                    container.scrollTop += 500;
+
+                    // Nếu là body/html thì dùng window
+                    if (container === document.body || container === document.documentElement) {
+                        window.scrollBy(0, 500);
+                    }
+
+                    if (getDrivePageCount() && getLoadedCount() >= getDrivePageCount()) {
+                        stopScroll();
+                    }
+                }, 1000);
+            } else {
+                stopScroll();
+            }
+        };
+
+        function stopScroll() {
+            isAutoScrolling = false;
+            clearInterval(scrollInterval);
+            autoBtn.innerHTML = '🚀 TỰ ĐỘNG CUỘN TRANG';
+            autoBtn.style.backgroundColor = '#e91e63';
+        }
+    }
+
+    function getLoadedCount() {
+        return Array.from(document.querySelectorAll("img")).filter(i =>
+            i.src.startsWith('blob:') && i.naturalWidth > 300 && i.offsetParent !== null
+        ).length;
+    }
+
+    function updateStatus() {
+        const btn = document.getElementById('pdf-ultimate-btn');
+        if (!btn || btn.getAttribute('loading') === 'true') return;
+        const total = getDrivePageCount();
+        const loaded = getLoadedCount();
+        if (total) {
+            btn.innerHTML = (loaded < total) ? `⚠️ CHƯA ĐỦ: ${loaded}/${total}` : `✅ ĐÃ ĐỦ: ${loaded}/${total}. TẢI!`;
+            btn.style.backgroundColor = (loaded < total) ? '#ff5722' : '#00e676';
+        } else {
+            btn.innerHTML = `📥 ĐÃ QUÉT: ${loaded} trang. TẢI!`;
+            btn.style.backgroundColor = '#00e676';
+        }
+    }
+
+    // Logic tải PDF (JPEG 0.95)
+    document.addEventListener('click', async (e) => {
+        if (e.target.id !== 'pdf-ultimate-btn') return;
+        const btn = e.target;
+        btn.setAttribute('loading', 'true');
+
+        if (!window.jspdf) {
+            const s = document.createElement('script');
+            s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+            document.head.appendChild(s);
+            while(!window.jspdf) await new Promise(r => setTimeout(r, 100));
+        }
+
+        const imgs = Array.from(document.querySelectorAll("img")).filter(i =>
+            i.src.startsWith('blob:') && i.naturalWidth > 300 && i.offsetParent !== null
+        );
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({
+            orientation: imgs[0].naturalWidth > imgs[0].naturalHeight ? "l" : "p",
+            unit: "px", format: [imgs[0].naturalWidth, imgs[0].naturalHeight]
+        });
+
+        for (let i = 0; i < imgs.length; i++) {
+            btn.innerHTML = `⏳ Xử lý: ${i+1}/${imgs.length}`;
+            const canvas = document.createElement("canvas");
+            canvas.width = imgs[i].naturalWidth;
+            canvas.height = imgs[i].naturalHeight;
+            canvas.getContext("2d").drawImage(imgs[i], 0, 0);
+            if (i > 0) pdf.addPage([imgs[i].naturalWidth, imgs[i].naturalHeight]);
+            pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, imgs[i].naturalWidth, imgs[i].naturalHeight, undefined, 'FAST');
+        }
+
+        pdf.save(document.title.split(" - Google Drive")[0] + ".pdf");
+        btn.innerHTML = '✅ XONG!';
+        setTimeout(() => { btn.setAttribute('loading', 'false'); updateStatus(); }, 3000);
+    });
+
+    setInterval(addUI, 1500);
+})();
